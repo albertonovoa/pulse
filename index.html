@@ -377,6 +377,15 @@ function parseCSV(text){
     var o={}; head.forEach(function(h,i){ o[h]=(r[i]||'').trim(); }); return o;
   });
 }
+function normDate(s){ // accepts "2026-06-10" or "10/06/2026" (d/m/y) → "2026-06-10"
+  if(!s) return null;
+  s=String(s).trim();
+  var m=s.match(/^(\d{4})-(\d{1,2})-(\d{1,2})/);
+  if(m) return m[1]+'-'+m[2].padStart(2,'0')+'-'+m[3].padStart(2,'0');
+  m=s.match(/^(\d{1,2})\/(\d{1,2})\/(\d{4})/);
+  if(m) return m[3]+'-'+m[2].padStart(2,'0')+'-'+m[1].padStart(2,'0');
+  return null;
+}
 function fetchCSV(url){
   return fetch(url,{cache:'no-store'}).then(function(r){
     if(!r.ok) throw new Error('HTTP '+r.status);
@@ -629,8 +638,8 @@ function hypnogram(stagesStr,startT,endT){
   var colors={AWAKE:'#FB923C',REM:'#2DD4BF',LIGHT:'#8B93F8',DEEP:'#7C6FF0'};
   var segs=stagesStr.split(';').map(function(p){
     var m=p.match(/^(\w+):(\d+)-(\d+)$/); return m?{t:m[1],a:+m[2],b:+m[3]}:null;
-  }).filter(Boolean);
-  if(!segs.length) return '<div class="muted small">no stage data</div>';
+  }).filter(function(g){ return g&&lanes[g.t]!=null; }); // skip ASLEEP/unknown types
+  if(!segs.length) return '<div class="muted small">no stage detail for this night (classic sleep log)</div>';
   var total=Math.max.apply(null,segs.map(function(s){return s.b}));
   var w=380,h=190,padL=46,padT=10,laneH=38;
   var iw=w-padL-8;
@@ -807,6 +816,11 @@ function renderToday(){
   TILE_DEFS.forEach(function(t){
     var v=num(d[t.k]);
     var hist=last(col(days,t.k),7);
+    if(t.k==='skin_temp_delta'&&v!=null&&Math.abs(v)>15){
+      // sheet holds absolute skin temp → show deviation from 30-day baseline
+      var sb=baseline(days,days.length-1,'skin_temp_delta');
+      if(sb){ v=Math.round((v-sb)*10)/10; var hm2=mean(hist); hist=hist.map(function(x){return x==null?null:x-hm2;}); }
+    }
     html+='<div class="tile"><div class="t-head">'+t.ic+' '+t.name+'</div>'+
       '<div class="t-val">'+(t.fmt?t.fmt(v):(v==null?'—':v))+(t.unit&&v!=null?'<small>'+t.unit+'</small>':'')+'</div>'+
       spark(hist,t.c1,t.c2)+'</div>';
@@ -943,7 +957,11 @@ function renderTrends(){
 
   // weight & calories (last 30 days)
   var wKey=cfg.unit==='lb'?2.20462:1;
-  var wts=col(d30,'weight_kg').map(function(v){return v==null?null:v*wKey;});
+  var wts=col(d30,'weight_kg').map(function(v){
+    if(v==null)return null;
+    if(v>400)v=v/1000; // legacy rows stored grams
+    return v*wKey;
+  });
   var cals=col(d30,'calories_consumed');
   $('weightCal').innerHTML=dualAxis(d30.map(function(x){return x.date}),wts,cals,cfg.unit,cfg.kcalGoal);
   var lastW=wts.filter(function(x){return x!=null}).pop();
@@ -1039,10 +1057,13 @@ function loadData(){
   jobs.push(cfg.workouts?fetchCSV(cfg.workouts).catch(function(){return []}):Promise.resolve([]));
   jobs.push(cfg.hr?fetchCSV(cfg.hr).catch(function(){return []}):Promise.resolve([]));
   return Promise.all(jobs).then(function(res){
+    if(!res[0].length) throw new Error('the Daily CSV has no rows. Likely the wrong tab was published — in Publish to web, select the "Daily" tab specifically (not "Entire Document"), or the Daily tab has no data yet (run backfill90Days in Apps Script)');
+    res[0].forEach(function(r){ r.date=normDate(r.date); });
+    (res[1]||[]).forEach(function(r){ r.date=normDate(r.date); });
+    (res[2]||[]).forEach(function(r){ r.date=normDate(r.date); });
     var days=res[0].filter(function(r){return r.date;});
+    if(!days.length) throw new Error('the CSV loaded but has no usable "date" column. Found headers: '+Object.keys(res[0][0]).slice(0,6).join(', ')+'. Check you published the Daily tab as CSV');
     days.sort(function(a,b){return a.date<b.date?-1:1;});
-    if(!days.length) throw new Error('Daily tab is empty');
-    var todayKey=new Date(); todayKey.setHours(0,0,0,0);
     DB={ days:days, workouts:res[1]||[], hrToday:[], sample:false };
     var lastDate=days[days.length-1].date;
     (res[2]||[]).forEach(function(r){
