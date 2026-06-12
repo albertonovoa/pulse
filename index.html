@@ -186,7 +186,7 @@ nav{position:fixed;left:0;right:0;bottom:0;z-index:50;padding:0 14px calc(10px +
 
     <div class="card coach">
       <div class="sec" style="margin-bottom:10px"><span class="bar" style="background:var(--green)"></span>Coach
-        <span class="right small" id="aiStatus" style="letter-spacing:0;font-weight:600;color:var(--faint)"></span></div>
+        <span class="right"><button class="btn" id="aiBtn" style="margin:0;padding:8px 16px;font-size:13.5px">✦ Generate</button></span></div>
       <div class="ccell"><div class="chead" style="color:var(--green2)">Today's state</div><p id="cState">—</p></div>
       <div class="ccell"><div class="chead" style="color:var(--teal)">What the data says</div><p id="cData">—</p></div>
       <div class="ccell"><div class="chead" style="color:#F472B6">What to do today</div><p id="cDo">—</p></div>
@@ -329,7 +329,8 @@ nav{position:fixed;left:0;right:0;bottom:0;z-index:50;padding:0 14px calc(10px +
       <input class="f" id="inOrKey" type="password" placeholder="sk-or-v1-…" autocomplete="off">
       <label class="f">Model</label>
       <input class="f" id="inOrModel" placeholder="openai/gpt-4o-mini">
-      <div class="small muted" style="margin-top:10px">The key is stored only on this device. Once per day (or when your numbers change) the app sends a compact summary of your sheet data to OpenRouter and renders the reply in the Coach cards. ~$0.001/day with a mini model.</div>
+      <button class="btn" id="saveAiBtn">Save AI settings</button>
+      <div class="small muted" style="margin-top:10px">Saved instantly on this device as you type (and again when you press the button). The coach only runs when you tap <b>✦ Generate</b> on the Fitness tab — it sends a compact summary of your sheet data to OpenRouter. ~$0.001 per call with a mini model.</div>
     </div>
 
     <div class="card small muted">
@@ -873,66 +874,13 @@ function renderFitness(){
   var weekAgo=new Date(d.date+'T12:00:00'); weekAgo.setDate(weekAgo.getDate()-6);
   var wkWeek=wk.filter(function(x){ return new Date(x.date+'T12:00:00')>=weekAgo; });
 
-  // ---- coach: four rule-based cards --------------------------------------
-  var kcal=kcalVal(d), goal=cfg.kcalGoal;
-  var kcal7=mean(last(days.map(kcalVal),7));
-  var todayWk=wk.filter(function(x){return x.date===d.date});
-
-  // TODAY'S STATE — plain summary of today's numbers
-  var st='So far: '+fmtK(num(d.steps))+' steps, '+(num(d.zone_min)||0)+' zone min'+
-    (kcal!=null?', '+fmtK(kcal)+' kcal logged':', no kcal logged yet')+'.';
-  if(todayWk.length) st+=' Workout done: '+esc(todayWk[0].type)+' ('+todayWk[0].duration_min+' min).';
-  if(ready!=null) st+=' Readiness '+ready+'/100 ('+readyLabel(ready)+').';
-  $('cState').innerHTML=st;
-
-  // WHAT THE DATA SAYS — 7-day facts vs your targets/baselines
-  var facts=[];
-  if(kcal7!=null&&goal){
-    var dev=Math.round((kcal7/goal-1)*100);
-    facts.push('You averaged '+fmtK(Math.round(kcal7))+' kcal over the last 7 days, '+
-      (Math.abs(dev)<=3?'right on':Math.abs(dev)+'% '+(dev>0?'above':'below'))+' your '+fmtK(goal)+' kcal goal.');
-  }
-  var w30=col(last(days,30),'weight_kg').map(function(v){return v!=null&&v>400?v/1000:v;}).filter(function(v){return v!=null});
-  if(w30.length>5){
-    var wd=Math.round((w30[w30.length-1]-w30[0])*10)/10;
-    facts.push('Weight is '+(wd===0?'flat':(wd<0?'down ':'up ')+Math.abs(wd)+' kg')+' over 30 days.');
-  }
-  var bH=baseline(days,i,'hrv_ms'), hv=num(d.hrv_ms);
-  if(hv&&bH) facts.push('HRV sits '+Math.round((hv/bH-1)*100)+'% vs baseline.');
-  $('cData').innerHTML=facts.slice(0,2).join(' ')||'Not enough history yet — facts appear after a week of data.';
-
-  // WHAT TO DO TODAY — readiness + remaining calorie budget
-  var act= ready==null?'' :
-    ready<40 ? 'Recovery first: keep movement light (easy walk, mobility) and protect sleep tonight.' :
-    ready<66 ? 'Steady day: moderate session is fine — a Choy Lee Fut form run-through or zone-2 ride, nothing maximal.' :
-    'You’re primed: schedule your hardest session today and build into zone 3–4 after a 10-min warm-up.';
-  if(kcal!=null&&goal){
-    var remn=goal-kcal;
-    act+=' '+(remn>=0?fmtK(remn)+' kcal left in today’s budget.':'You’re '+fmtK(-remn)+' kcal over budget — keep dinner light.');
-  }
-  var pl=cfg.proteinTarget-(num(d.protein_g)||0);
-  act+=' '+(pl>0? Math.round(pl)+' g protein still to go — front-load it at the next meal.':'Protein target hit. ✔');
-  $('cDo').innerHTML=act||'—';
-
-  // TREND TO WATCH — the largest sustained deviation
-  var trends=[];
-  if(kcal7!=null&&goal&&Math.abs(kcal7/goal-1)>0.08)
-    trends.push([Math.abs(kcal7/goal-1),'Average intake is '+Math.round(Math.abs(kcal7/goal-1)*100)+'% '+(kcal7>goal?'above':'below')+' goal — watch how it tracks against the weight line on Trends.']);
-  var r7=mean(last(col(days,'resting_hr'),7)), r30=baseline(days,i,'resting_hr');
-  if(r7&&r30&&r7-r30>1.5) trends.push([(r7-r30)/10,'Resting HR is creeping up ('+r7.toFixed(0)+' vs '+r30.toFixed(0)+' baseline) — possible fatigue accumulating.']);
-  var s7=mean(last(col(days,'sleep_min'),7)), s30=baseline(days,i,'sleep_min');
-  if(s7&&s30&&s30-s7>25) trends.push([(s30-s7)/300,'You’re running a sleep debt of ~'+Math.round(s30-s7)+' min/night vs your norm.']);
-  if(wz<cfg.zoneTarget*0.5&&new Date(d.date+'T12:00').getDay()>=4) trends.push([0.1,'Zone minutes are at '+wz+' of '+cfg.zoneTarget+' late in the week — a brisk session would close the gap.']);
-  trends.sort(function(a,b){return b[0]-a[0]});
-  $('cTrend').innerHTML=trends.length?trends[0][1]:'Nothing flagged — all 7-day metrics are within normal range of your baselines.';
+  // coach cards: AI-only, generated on demand via the ✦ Generate button
+  renderCoachCards();
 
   // week range label
   var d0=new Date(d.date+'T12:00:00'); var dStart=new Date(d0); dStart.setDate(dStart.getDate()-6);
   var fmtDM=function(x){return x.getDate()+' '+x.toLocaleDateString('en-GB',{month:'short'})};
   $('weekRange').textContent=fmtDM(dStart)+' – '+fmtDM(d0);
-
-  // AI coach overlay (replaces the rule-based cards above when available)
-  maybeAiCoach(days,i,d,todayWk);
 
   // last workout
   var lw=wk[0];
@@ -1009,15 +957,31 @@ function aiPayload(days,i,d,todayWk){
   };
 }
 
-function maybeAiCoach(days,i,d,todayWk){
-  if(!cfg.orKey||DB.sample){ $('aiStatus').textContent=DB.sample?'':'rule-based'; return; }
+/** Show the last generated cards (persisted), or placeholders. */
+function renderCoachCards(){
+  var c=null; try{ c=JSON.parse(localStorage.getItem('pulse_ai')||'null'); }catch(e){}
+  if(c&&c.cards&&c.cards.state){
+    $('cState').textContent=c.cards.state; $('cData').textContent=c.cards.data;
+    $('cDo').textContent=c.cards.action; $('cTrend').textContent=c.cards.trend;
+    $('coachFoot').textContent='Generated by '+(c.model||'AI')+(c.when?' · '+c.when:'');
+  } else {
+    ['cState','cData','cDo','cTrend'].forEach(function(id){ $(id).textContent='—'; });
+    $('coachFoot').textContent=cfg.orKey
+      ? 'Tap ✦ Generate for fresh insights.'
+      : 'Add your OpenRouter key in You → AI coach, then tap ✦ Generate.';
+  }
+}
+
+/** Manual trigger from the ✦ Generate button. */
+function generateCoach(){
+  if(DB.sample){ $('coachFoot').textContent='Coach runs on your real data — connect the sheet first (You → Data source).'; return; }
+  if(!cfg.orKey){ $('coachFoot').textContent='No API key saved — add it in You → AI coach.'; go('you'); return; }
+  var days=DB.days; if(!days.length) return;
+  var i=days.length-1, d=days[i];
+  var todayWk=DB.workouts.filter(function(x){return x.date===d.date});
   var payload=aiPayload(days,i,d,todayWk);
-  var key=d.date+'|'+payload.today.kcal_eaten+'|'+payload.today.protein_g+'|'+
-    payload.today.steps+'|'+(payload.today.food_log||'').length;
-  var cached=null;
-  try{ cached=JSON.parse(localStorage.getItem('pulse_ai')||'null'); }catch(e){}
-  if(cached&&cached.key===key){ applyAiCards(cached.cards); return; }
-  $('aiStatus').textContent='asking AI…';
+  var btn=$('aiBtn'); btn.disabled=true; btn.textContent='Asking…';
+  $('coachFoot').textContent='Calling '+cfg.orModel+'…';
   fetch('https://openrouter.ai/api/v1/chat/completions',{
     method:'POST',
     headers:{ 'Authorization':'Bearer '+cfg.orKey, 'Content-Type':'application/json' },
@@ -1039,19 +1003,17 @@ function maybeAiCoach(days,i,d,todayWk){
     var m=txt.match(/\{[\s\S]*\}/);
     if(!m) throw new Error('model reply was not JSON: "'+txt.slice(0,60)+'…"');
     var cards=JSON.parse(m[0]);
-    if(!cards.state||!cards.data||!cards.action||!cards.trend) throw new Error('bad shape');
-    localStorage.setItem('pulse_ai',JSON.stringify({key:key,cards:cards}));
-    applyAiCards(cards);
+    if(!cards.state||!cards.data||!cards.action||!cards.trend) throw new Error('reply missing one of state/data/action/trend');
+    localStorage.setItem('pulse_ai',JSON.stringify({
+      cards:cards, model:cfg.orModel,
+      when:new Date().toLocaleString('en-GB',{day:'numeric',month:'short',hour:'2-digit',minute:'2-digit'})
+    }));
+    renderCoachCards();
   }).catch(function(e){
-    $('aiStatus').textContent='AI failed — using rules';
-    $('coachFoot').textContent='Rule-based fallback · OpenRouter error: '+e.message;
+    $('coachFoot').textContent='OpenRouter error: '+e.message;
+  }).finally(function(){
+    var btn=$('aiBtn'); btn.disabled=false; btn.textContent='✦ Generate';
   });
-}
-function applyAiCards(c){
-  $('cState').textContent=c.state; $('cData').textContent=c.data;
-  $('cDo').textContent=c.action; $('cTrend').textContent=c.trend;
-  $('aiStatus').textContent='✦ '+cfg.orModel.split('/').pop();
-  $('coachFoot').textContent='Generated by '+cfg.orModel+' via OpenRouter from your sheet data';
 }
 
 var TRENDS=[
@@ -1245,6 +1207,17 @@ function init(){
   $('tglSample').onclick=function(){
     cfg.sample=!cfg.sample; saveCfg(); renderYou(); loadData();
   };
+  // AI settings: persist on every keystroke so a refresh never loses them
+  $('inOrKey').oninput=function(){ cfg.orKey=this.value.trim(); saveCfg(); };
+  $('inOrModel').oninput=function(){ cfg.orModel=this.value.trim()||'openai/gpt-4o-mini'; saveCfg(); };
+  $('saveAiBtn').onclick=function(){
+    cfg.orKey=$('inOrKey').value.trim();
+    cfg.orModel=$('inOrModel').value.trim()||'openai/gpt-4o-mini';
+    saveCfg();
+    var b=this; b.textContent='Saved ✓';
+    setTimeout(function(){ b.textContent='Save AI settings'; },1500);
+  };
+  $('aiBtn').onclick=generateCoach;
   go('today');
   loadData();
   if('serviceWorker' in navigator){
