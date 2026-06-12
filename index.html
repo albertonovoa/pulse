@@ -132,6 +132,7 @@ nav{position:fixed;left:0;right:0;bottom:0;z-index:50;padding:0 14px calc(10px +
 .page{display:none}.page.show{display:block}
 .center{text-align:center}
 .gauge-wrap{position:relative;width:158px;height:158px;flex:none}
+.gauge-wrap svg{width:100%;height:100%;display:block}
 .gauge-c{position:absolute;inset:0;display:flex;flex-direction:column;align-items:center;justify-content:center}
 .gauge-c b{font-size:40px;font-weight:700;color:var(--green)}
 .gauge-c span{font-size:13px;color:var(--muted);margin-top:-2px}
@@ -159,7 +160,6 @@ nav{position:fixed;left:0;right:0;bottom:0;z-index:50;padding:0 14px calc(10px +
     <div class="hero">
       <div class="gauge-wrap">
         <div id="ringsSvg"></div>
-        <div class="gauge-c"><b id="readyNum">—</b><span id="readyLabel"></span></div>
       </div>
       <div class="legend">
         <div class="li"><div class="lab"><span class="dot" style="background:var(--green)"></span>Steps</div><div class="val" id="lgSteps">—</div></div>
@@ -815,9 +815,6 @@ function renderToday(){
 
   var ready=readiness(days,i), ss=sleepScore(d);
   var steps=num(d.steps), wz=weekZone(days,i), kcal=kcalVal(d), prot=num(d.protein_g);
-  var protLeft=Math.max(0,cfg.proteinTarget-(prot||0));
-  $('readyNum').textContent=protLeft;
-  $('readyLabel').textContent='g protein left';
   $('lgSteps').textContent=(steps==null?'—':fmtK(steps))+' / '+fmtK(cfg.stepTarget);
   $('lgZone').textContent=wz+' / '+cfg.zoneTarget;
   $('lgKcal').textContent=(kcal==null?'—':fmtK(kcal))+' / '+fmtK(cfg.kcalGoal);
@@ -1024,16 +1021,24 @@ function maybeAiCoach(days,i,d,todayWk){
   fetch('https://openrouter.ai/api/v1/chat/completions',{
     method:'POST',
     headers:{ 'Authorization':'Bearer '+cfg.orKey, 'Content-Type':'application/json' },
-    body:JSON.stringify({ model:cfg.orModel, temperature:0.4, max_tokens:600,
+    body:JSON.stringify({ model:cfg.orModel, temperature:0.4, max_tokens:900,
       messages:[ {role:'system',content:AI_SYS},
                  {role:'user',content:JSON.stringify(payload)} ] })
   }).then(function(r){
-    if(!r.ok) throw new Error('HTTP '+r.status);
-    return r.json();
+    return r.json().catch(function(){ throw new Error('HTTP '+r.status+' (no JSON body)'); })
+      .then(function(j){
+        // OpenRouter puts the real reason here: no credits, bad model slug, rate limit…
+        if(j.error) throw new Error(j.error.message||JSON.stringify(j.error).slice(0,120));
+        if(!r.ok) throw new Error('HTTP '+r.status);
+        return j;
+      });
   }).then(function(j){
     var txt=(j.choices&&j.choices[0]&&j.choices[0].message&&j.choices[0].message.content)||'';
+    txt=txt.replace(/```(json)?/g,'').trim();
+    if(!txt) throw new Error('model returned an empty reply — try another model slug');
     var m=txt.match(/\{[\s\S]*\}/);
-    var cards=JSON.parse(m?m[0]:txt);
+    if(!m) throw new Error('model reply was not JSON: "'+txt.slice(0,60)+'…"');
+    var cards=JSON.parse(m[0]);
     if(!cards.state||!cards.data||!cards.action||!cards.trend) throw new Error('bad shape');
     localStorage.setItem('pulse_ai',JSON.stringify({key:key,cards:cards}));
     applyAiCards(cards);
