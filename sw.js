@@ -1,5 +1,8 @@
-/* Pulse PWA service worker — app shell cache-first, sheet data network-first */
-var VERSION = 'pulse-v1';
+/* Pulse PWA service worker
+ * v3 — app shell is NETWORK-FIRST so new deployments show up on next launch;
+ * cache is only the offline fallback. Sheet CSVs network-first too.
+ */
+var VERSION = 'pulse-v3';
 var SHELL = [
   './',
   './index.html',
@@ -26,23 +29,37 @@ self.addEventListener('activate', function (e) {
   );
 });
 
+function networkFirst(e) {
+  e.respondWith(
+    fetch(e.request).then(function (res) {
+      var copy = res.clone();
+      caches.open(VERSION).then(function (c) { c.put(e.request, copy); });
+      return res;
+    }).catch(function () {
+      return caches.match(e.request, { ignoreSearch: true })
+        .then(function (hit) { return hit || caches.match('./index.html'); });
+    })
+  );
+}
+
 self.addEventListener('fetch', function (e) {
   var url = new URL(e.request.url);
 
-  // Google Sheets CSV → network first, fall back to last cached copy (offline)
-  if (url.hostname === 'docs.google.com') {
-    e.respondWith(
-      fetch(e.request).then(function (res) {
-        var copy = res.clone();
-        caches.open(VERSION).then(function (c) { c.put(e.request, copy); });
-        return res;
-      }).catch(function () { return caches.match(e.request); })
-    );
-    return;
-  }
+  // Never touch API calls (OpenRouter etc.)
+  if (url.hostname === 'openrouter.ai') return;
 
-  // App shell → cache first
+  // Sheet CSVs → network-first with offline fallback
+  if (url.hostname === 'docs.google.com') { networkFirst(e); return; }
+
   if (url.origin === location.origin) {
+    // HTML/navigations + sw-adjacent files → network-first so updates land
+    if (e.request.mode === 'navigate' ||
+        url.pathname.endsWith('.html') ||
+        url.pathname.endsWith('manifest.webmanifest')) {
+      networkFirst(e);
+      return;
+    }
+    // static assets (icons) → cache-first
     e.respondWith(
       caches.match(e.request, { ignoreSearch: true }).then(function (hit) {
         return hit || fetch(e.request).then(function (res) {
